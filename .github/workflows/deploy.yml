@@ -33,13 +33,13 @@ jobs:
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key
           chmod 600 private_key
-          ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'EOF'
+          ssh -t -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'EOF'
             mkdir -p ~/simple-backend-api
             rm -rf ~/simple-backend-api/*
             exit
           EOF
           scp -i private_key -o StrictHostKeyChecking=no -r ./* $VM_USER@$VM_HOST:~/simple-backend-api
-          ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'EOF'
+          ssh -t -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'EOF'
             cd ~/simple-backend-api
             python3 -m venv venv
             source venv/bin/activate
@@ -48,3 +48,4 @@ jobs:
             nohup python app.py &
             exit
           EOF
+
