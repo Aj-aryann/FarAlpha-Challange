@@ -13,14 +13,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '14'
-
-      - name: Install dependencies
-        run: npm install
-
       - name: Add SSH key
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > private_key
@@ -33,15 +25,30 @@ jobs:
           VM_USER: ${{ secrets.VM_USER }}
         run: |
           ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
+            # Update the package list and install Node.js and npm
+            sudo apt update
+            sudo apt install -y nodejs npm
+
+            # Create the directory for the app and remove old files
             mkdir -p ~/simple-backend-api
             rm -rf ~/simple-backend-api/*
+
+            # Exit the SSH session
             exit
           EOF
           scp -i private_key -o StrictHostKeyChecking=no -r ./* $VM_USER@$VM_HOST:~/simple-backend-api
           ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
             cd ~/simple-backend-api
+
+            # Install dependencies
             npm install
+
+            # Stop any running instances of the app
             pkill -f node || true
+
+            # Start the app
             nohup npm start &
+
+            # Exit the SSH session
             exit
           EOF
