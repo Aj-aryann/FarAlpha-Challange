@@ -24,68 +24,31 @@ jobs:
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_USER: ${{ secrets.VM_USER }}
         run: |
-          # Determine the inactive directory and port
-          ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'EOF'
-            if [ -f ~/active_dir ]; then
-              ACTIVE_DIR=$(cat ~/active_dir)
-              if [ "$ACTIVE_DIR" = "blue" ]; then
-                NEW_DIR="green"
-                NEW_PORT=3001
-                OLD_PORT=3000
-              else
-                NEW_DIR="blue"
-                NEW_PORT=3000
-                OLD_PORT=3001
-              fi
-            else
-              # Default to blue if no active directory is set
-              NEW_DIR="blue"
-              NEW_PORT=3000
-              OLD_PORT=3001
-            fi
+          ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
+            # Update the package list and install Node.js and npm
+            sudo apt update
+            sudo apt install -y nodejs npm
 
             # Create the directory for the app and remove old files
-            mkdir -p ~/simple-backend-api-$NEW_DIR
-            rm -rf ~/simple-backend-api-$NEW_DIR/*
+            mkdir -p ~/simple-backend-api
+            rm -rf ~/simple-backend-api/*
 
-            echo $NEW_DIR $NEW_PORT $OLD_PORT
+            # Exit the SSH session
+            exit
           EOF
-        id: setup
-
-      - name: Get directory and ports
-        id: vars
-        run: echo "::set-output name=new_dir::$(cat private_key)"
-
-      - name: Copy files to VM
-        run: |
-          NEW_DIR=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $1}')
-          scp -i private_key -o StrictHostKeyChecking=no -r ./* $VM_USER@$VM_HOST:~/simple-backend-api-$NEW_DIR
-
-      - name: Install dependencies and start app
-        run: |
-          NEW_DIR=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $1}')
-          NEW_PORT=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $2}')
-          OLD_PORT=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $3}')
-          
+          scp -i private_key -o StrictHostKeyChecking=no -r ./* $VM_USER@$VM_HOST:~/simple-backend-api
           ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
-            cd ~/simple-backend-api-$NEW_DIR
-            
+            cd ~/simple-backend-api
+
             # Install dependencies
             npm install
 
-            # Start the app on the new port
-            nohup npm start --port $NEW_PORT &
+            # Stop any running instances of the app
+            pkill -f node || true
 
-            # Wait for the new app to be up and running
-            sleep 10
+            # Start the app
+            nohup npm start &
 
-            # Update the active directory and port
-            echo $NEW_DIR > ~/active_dir
-
-            # Optionally, stop the old instance
-            if [ "$ACTIVE_DIR" = "blue" ]; then
-              pkill -f "node .*--port 3001" || true
-            else
-              pkill -f "node .*--port 3000" || true
-            fi
+            # Exit the SSH session
+            exit
           EOF
