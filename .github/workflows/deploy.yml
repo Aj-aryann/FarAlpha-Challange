@@ -25,29 +25,54 @@ jobs:
           VM_USER: ${{ secrets.VM_USER }}
         run: |
           ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
-            # Update the package list and install Node.js and npm
-            sudo apt update
-            sudo apt install -y nodejs npm
+            # Determine the inactive directory and port
+            if [ -f ~/active_dir ]; then
+              ACTIVE_DIR=\$(cat ~/active_dir)
+              if [ "\$ACTIVE_DIR" = "blue" ]; then
+                NEW_DIR="green"
+                NEW_PORT=3001
+                OLD_PORT=3000
+              else
+                NEW_DIR="blue"
+                NEW_PORT=3000
+                OLD_PORT=3001
+              fi
+            else
+              # Default to blue if no active directory is set
+              NEW_DIR="blue"
+              NEW_PORT=3000
+              OLD_PORT=3001
+            fi
 
             # Create the directory for the app and remove old files
-            mkdir -p ~/simple-backend-api
-            rm -rf ~/simple-backend-api/*
+            mkdir -p ~/simple-backend-api-\$NEW_DIR
+            rm -rf ~/simple-backend-api-\$NEW_DIR/*
 
             # Exit the SSH session
             exit
           EOF
-          scp -i private_key -o StrictHostKeyChecking=no -r ./* $VM_USER@$VM_HOST:~/simple-backend-api
+          scp -i private_key -o StrictHostKeyChecking=no -r ./* $VM_USER@$VM_HOST:~/simple-backend-api-$NEW_DIR
           ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
-            cd ~/simple-backend-api
+            cd ~/simple-backend-api-$NEW_DIR
 
             # Install dependencies
             npm install
 
-            # Stop any running instances of the app
-            pkill -f node || true
+            # Start the app on the new port
+            nohup npm start --port \$NEW_PORT &
 
-            # Start the app
-            nohup npm start &
+            # Wait for the new app to be up and running
+            sleep 10
+
+            # Update the active directory and port
+            echo $NEW_DIR > ~/active_dir
+
+            # Optionally, stop the old instance
+            if [ "\$ACTIVE_DIR" = "blue" ]; then
+              pkill -f "node .*--port 3001" || true
+            else
+              pkill -f "node .*--port 3000" || true
+            fi
 
             # Exit the SSH session
             exit
