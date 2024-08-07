@@ -14,78 +14,59 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Add SSH key
-        run: |
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > private_key
-          chmod 600 private_key
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to VM
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          VM_HOST: ${{ secrets.VM_HOST }}
-          VM_USER: ${{ secrets.VM_USER }}
+      - name: Determine inactive directory and port
+        id: determine-inactive
         run: |
-          # Determine the inactive directory and port
-          ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'EOF'
+          ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
             if [ -f ~/active_dir ]; then
-              ACTIVE_DIR=$(cat ~/active_dir)
-              if [ "$ACTIVE_DIR" = "blue" ]; then
-                NEW_DIR="green"
-                NEW_PORT=3001
-                OLD_PORT=3000
+              ACTIVE_DIR=\$(cat ~/active_dir)
+              if [ "\$ACTIVE_DIR" = "blue" ]; then
+                echo "green 3001 3000" > ~/deployment_info
               else
-                NEW_DIR="blue"
-                NEW_PORT=3000
-                OLD_PORT=3001
+                echo "blue 3000 3001" > ~/deployment_info
               fi
             else
-              # Default to blue if no active directory is set
-              NEW_DIR="blue"
-              NEW_PORT=3000
-              OLD_PORT=3001
+              echo "blue 3000 3001" > ~/deployment_info
             fi
-
-            # Create the directory for the app and remove old files
-            mkdir -p ~/simple-backend-api-$NEW_DIR
-            rm -rf ~/simple-backend-api-$NEW_DIR/*
-
-            echo $NEW_DIR $NEW_PORT $OLD_PORT
+            cat ~/deployment_info
           EOF
-        id: setup
+        env:
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_HOST: ${{ secrets.VM_HOST }}
 
-      - name: Get directory and ports
-        id: vars
-        run: echo "::set-output name=new_dir::$(cat private_key)"
-
-      - name: Copy files to VM
+      - name: Parse deployment info
+        id: parse-info
         run: |
-          NEW_DIR=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $1}')
-          scp -i private_key -o StrictHostKeyChecking=no -r ./* $VM_USER@$VM_HOST:~/simple-backend-api-$NEW_DIR
+          info=$(ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST 'cat ~/deployment_info')
+          IFS=' ' read -r new_dir new_port old_port <<< "$info"
+          echo "::set-output name=new_dir::$new_dir"
+          echo "::set-output name=new_port::$new_port"
+          echo "::set-output name=old_port::$old_port"
+        env:
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_HOST: ${{ secrets.VM_HOST }}
 
-      - name: Install dependencies and start app
+      - name: Deploy new version
         run: |
-          NEW_DIR=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $1}')
-          NEW_PORT=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $2}')
-          OLD_PORT=$(echo "${{ steps.setup.outputs.stdout }}" | awk '{print $3}')
-          
-          ssh -i private_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
-            cd ~/simple-backend-api-$NEW_DIR
-            
-            # Install dependencies
+          ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
+            mkdir -p ~/simple-backend-api-${{ steps.parse-info.outputs.new_dir }}
+            rm -rf ~/simple-backend-api-${{ steps.parse-info.outputs.new_dir }}/*
+            exit
+          EOF
+          scp -r ./* $VM_USER@$VM_HOST:~/simple-backend-api-${{ steps.parse-info.outputs.new_dir }}
+          ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << EOF
+            cd ~/simple-backend-api-${{ steps.parse-info.outputs.new_dir }}
             npm install
-
-            # Start the app on the new port
-            nohup npm start --port $NEW_PORT &
-
-            # Wait for the new app to be up and running
+            nohup npm start --port ${{ steps.parse-info.outputs.new_port }} &
             sleep 10
-
-            # Update the active directory and port
-            echo $NEW_DIR > ~/active_dir
-
-            # Optionally, stop the old instance
-            if [ "$ACTIVE_DIR" = "blue" ]; then
-              pkill -f "node .*--port 3001" || true
-            else
-              pkill -f "node .*--port 3000" || true
-            fi
+            echo "${{ steps.parse-info.outputs.new_dir }}" > ~/active_dir
+            pkill -f "node .*--port ${{ steps.parse-info.outputs.old_port }}" || true
+            exit
           EOF
+        env:
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_HOST: ${{ secrets.VM_HOST }}
